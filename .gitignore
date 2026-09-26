@@ -6,15 +6,15 @@ env/
 # Environment Variables & Secrets
 .env
 
-# Python Cache & Databases
+# SQLite Database (generated automatically by seed.py)
+farmconnect.db
+
+# Python Cache & Temp Files
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
 .pytest_cache/
-
-# SQLite Database (Optional: keep or ignore, ignore by default to prevent merge conflicts)
-# farmconnect.db
 
 # OS Files
 .DS_Store
