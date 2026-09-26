@@ -1,8 +1,10 @@
-from fastapi import FastAPI, Query
-from fastapi.middleware.cors import CORSMiddleware
+import logging
 from typing import List, Optional
-from dotenv import load_dotenv
+from fastapi import FastAPI, APIRouter, Query, HTTPException, Request, status
+from fastapi.responses import JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
 
+from config import settings
 import database
 from models import (
     EquipmentCreate, EquipmentResponse,
@@ -11,192 +13,239 @@ from models import (
 )
 from policy_matcher import get_policy_matches
 
-# Load environment variables (.env)
-load_dotenv()
+# -------------------------------------------------------------------
+# Logging Setup
+# -------------------------------------------------------------------
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+)
+logger = logging.getLogger("farmconnect.api")
 
-# Initialize FastAPI app
+# -------------------------------------------------------------------
+# FastAPI App Initialization
+# -------------------------------------------------------------------
 app = FastAPI(
-    title="FarmConnect API",
-    description="Backend API service for FarmConnect hackathon project",
-    version="1.0.0"
+    title=settings.APP_NAME,
+    description="Production-grade Backend API Service & AI Policy Matcher for FarmConnect",
+    version="1.0.0",
+    docs_url="/docs",
+    redoc_url="/redoc"
 )
 
-# Enable CORS for Next.js frontend communication
+# -------------------------------------------------------------------
+# CORS Middleware Configuration
+# -------------------------------------------------------------------
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=settings.CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+# -------------------------------------------------------------------
+# Global Exception Handlers (Consistent JSON Error Shape)
+# -------------------------------------------------------------------
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException):
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={
+            "error": exc.detail if isinstance(exc.detail, str) else "HTTP Exception",
+            "code": f"HTTP_{exc.status_code}",
+            "detail": str(exc.detail)
+        }
+    )
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    logger.error(f"Unhandled exception on {request.url.path}: {exc}", exc_info=True)
+    return JSONResponse(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        content={
+            "error": "Internal Server Error",
+            "code": "INTERNAL_SERVER_ERROR",
+            "detail": "An unexpected error occurred. Please try again later."
+        }
+    )
+
+# -------------------------------------------------------------------
+# Application Startup Event
+# -------------------------------------------------------------------
 @app.on_event("startup")
 def startup_event():
+    logger.info("Initializing database tables and indexes on startup...")
     database.init_db()
 
+# -------------------------------------------------------------------
+# Health Check Endpoint
+# -------------------------------------------------------------------
+@app.get("/health", tags=["Health"], summary="Check System & DB Health")
+def health_check():
+    """Checks service operational status and SQLite database connectivity."""
+    db_status = "unhealthy"
+    try:
+        with database.get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT 1;")
+            if cursor.fetchone():
+                db_status = "healthy"
+    except Exception as e:
+        logger.error(f"Health check DB ping failed: {e}")
 
-@app.get("/")
+    return {
+        "status": "online" if db_status == "healthy" else "degraded",
+        "database": db_status,
+        "app": settings.APP_NAME,
+        "environment": settings.ENV
+    }
+
+@app.get("/", tags=["Health"], include_in_schema=False)
 def read_root():
     return {
         "status": "online",
-        "app": "FarmConnect Backend API",
-        "docs_url": "/docs"
+        "app": settings.APP_NAME,
+        "docs_url": "/docs",
+        "health_url": "/health"
     }
 
 # -------------------------------------------------------------------
-# 1. Equipment Endpoints
+# APIRouter v1
 # -------------------------------------------------------------------
+api_v1_router = APIRouter(prefix="/api/v1")
 
-@app.get("/api/equipment", response_model=List[EquipmentResponse])
-def get_equipment(
-    location: Optional[str] = Query(None, description="City/Location filter"),
-    category: Optional[str] = Query(None, alias="type", description="Category or Type filter")
+# Equipment Endpoints
+@api_v1_router.get(
+    "/equipment",
+    response_model=List[EquipmentResponse],
+    tags=["Equipment"],
+    summary="List and filter registered equipment"
+)
+def get_equipment_v1(
+    location: Optional[str] = Query(None, description="Filter by city or location"),
+    category: Optional[str] = Query(None, alias="type", description="Filter by equipment category/type")
 ):
-    conn = database.get_db_connection()
-    cursor = conn.cursor()
+    """Retrieve all available agricultural equipment with optional location & type filtering."""
+    with database.get_db_connection() as conn:
+        cursor = conn.cursor()
+        query = "SELECT id, name, type, purpose, condition, rent_per_day, location, contact, vendor_name, image_url, available, created_at, updated_at FROM equipment WHERE 1=1"
+        params = []
 
-    query = "SELECT id, name, type, purpose, condition, rent_per_day, location, contact, vendor_name, image_url, available FROM equipment WHERE 1=1"
-    params = []
+        if location and location.strip():
+            query += " AND LOWER(location) LIKE ?"
+            params.append(f"%{location.strip().lower()}%")
 
-    if location and location.strip():
-        query += " AND LOWER(location) LIKE ?"
-        params.append(f"%{location.strip().lower()}%")
+        if category and category.strip():
+            query += " AND LOWER(type) LIKE ?"
+            params.append(f"%{category.strip().lower()}%")
 
-    if category and category.strip():
-        query += " AND LOWER(type) LIKE ?"
-        params.append(f"%{category.strip().lower()}%")
+        query += " ORDER BY id DESC"
+        cursor.execute(query, params)
+        rows = cursor.fetchall()
 
-    query += " ORDER BY id DESC"
+        result = [dict(row) for row in rows]
+        for item in result:
+            item["available"] = bool(item["available"])
+        return result
 
-    cursor.execute(query, params)
-    rows = cursor.fetchall()
-    conn.close()
+@api_v1_router.post(
+    "/equipment",
+    status_code=status.HTTP_201_CREATED,
+    tags=["Equipment"],
+    summary="Register new equipment listing"
+)
+def create_equipment_v1(data: EquipmentCreate):
+    """Registers new agricultural machinery into the database."""
+    with database.get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO equipment (name, type, purpose, condition, rent_per_day, location, contact, vendor_name, image_url, available)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            data.name,
+            data.type,
+            data.purpose,
+            data.condition,
+            data.rent_per_day,
+            data.location,
+            data.contact,
+            data.vendor_name,
+            data.image_url,
+            1 if data.availability else 0
+        ))
+        new_id = cursor.lastrowid
+        logger.info(f"Registered new equipment item ID {new_id}: {data.name}")
+        return {"success": True, "id": new_id}
 
-    result = []
-    for row in rows:
-        result.append({
-            "id": row["id"],
-            "name": row["name"],
-            "type": row["type"],
-            "purpose": row["purpose"],
-            "condition": row["condition"],
-            "rent_per_day": row["rent_per_day"],
-            "location": row["location"],
-            "contact": row["contact"],
-            "vendor_name": row["vendor_name"],
-            "image_url": row["image_url"],
-            "available": bool(row["available"])
-        })
-    return result
-
-
-@app.post("/api/equipment")
-def create_equipment(data: EquipmentCreate):
-    conn = database.get_db_connection()
-    cursor = conn.cursor()
-
-    cursor.execute("""
-        INSERT INTO equipment (name, type, purpose, condition, rent_per_day, location, contact, vendor_name, image_url, available)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """, (
-        data.name,
-        data.type,
-        data.purpose,
-        data.condition,
-        data.rent_per_day,
-        data.location,
-        data.contact,
-        data.vendor_name,
-        data.image_url,
-        1 if data.availability else 0
-    ))
-
-    conn.commit()
-    new_id = cursor.lastrowid
-    conn.close()
-
-    return {"success": True, "id": new_id}
-
-
-# -------------------------------------------------------------------
-# 2. Worker Endpoints
-# -------------------------------------------------------------------
-
-@app.get("/api/workers", response_model=List[WorkerResponse])
-def get_workers(
-    location: Optional[str] = Query(None, description="City/Location filter"),
-    skill: Optional[str] = Query(None, description="Skill filter")
+# Worker Endpoints
+@api_v1_router.get(
+    "/workers",
+    response_model=List[WorkerResponse],
+    tags=["Workers"],
+    summary="List and filter agricultural workers"
+)
+def get_workers_v1(
+    location: Optional[str] = Query(None, description="Filter by city or location"),
+    skill: Optional[str] = Query(None, description="Filter by skill")
 ):
-    conn = database.get_db_connection()
-    cursor = conn.cursor()
+    """Retrieve registered agricultural laborers with optional location & skill filtering."""
+    with database.get_db_connection() as conn:
+        cursor = conn.cursor()
+        query = "SELECT id, name, skill, experience, daily_wage, location, contact, image_url, available_from, available_to, created_at, updated_at FROM workers WHERE 1=1"
+        params = []
 
-    query = "SELECT id, name, skill, experience, daily_wage, location, contact, image_url, available_from, available_to FROM workers WHERE 1=1"
-    params = []
+        if location and location.strip():
+            query += " AND LOWER(location) LIKE ?"
+            params.append(f"%{location.strip().lower()}%")
 
-    if location and location.strip():
-        query += " AND LOWER(location) LIKE ?"
-        params.append(f"%{location.strip().lower()}%")
+        if skill and skill.strip():
+            query += " AND LOWER(skill) LIKE ?"
+            params.append(f"%{skill.strip().lower()}%")
 
-    if skill and skill.strip():
-        query += " AND LOWER(skill) LIKE ?"
-        params.append(f"%{skill.strip().lower()}%")
+        query += " ORDER BY id DESC"
+        cursor.execute(query, params)
+        rows = cursor.fetchall()
+        return [dict(row) for row in rows]
 
-    query += " ORDER BY id DESC"
+@api_v1_router.post(
+    "/workers",
+    status_code=status.HTTP_201_CREATED,
+    tags=["Workers"],
+    summary="Register new worker listing"
+)
+def create_worker_v1(data: WorkerCreate):
+    """Registers new agricultural laborer or labor group into the database."""
+    with database.get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO workers (name, skill, experience, daily_wage, location, contact, image_url, available_from, available_to)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            data.name,
+            data.skill,
+            data.experience,
+            data.daily_wage,
+            data.location,
+            data.contact,
+            data.image_url,
+            data.available_from,
+            data.available_to
+        ))
+        new_id = cursor.lastrowid
+        logger.info(f"Registered new worker ID {new_id}: {data.name}")
+        return {"success": True, "id": new_id}
 
-    cursor.execute(query, params)
-    rows = cursor.fetchall()
-    conn.close()
-
-    result = []
-    for row in rows:
-        result.append({
-            "id": row["id"],
-            "name": row["name"],
-            "skill": row["skill"],
-            "experience": row["experience"],
-            "daily_wage": row["daily_wage"],
-            "location": row["location"],
-            "contact": row["contact"],
-            "image_url": row["image_url"],
-            "available_from": row["available_from"],
-            "available_to": row["available_to"]
-        })
-    return result
-
-
-@app.post("/api/workers")
-def create_worker(data: WorkerCreate):
-    conn = database.get_db_connection()
-    cursor = conn.cursor()
-
-    cursor.execute("""
-        INSERT INTO workers (name, skill, experience, daily_wage, location, contact, image_url, available_from, available_to)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """, (
-        data.name,
-        data.skill,
-        data.experience,
-        data.daily_wage,
-        data.location,
-        data.contact,
-        data.image_url,
-        data.available_from,
-        data.available_to
-    ))
-
-    conn.commit()
-    new_id = cursor.lastrowid
-    conn.close()
-
-    return {"success": True, "id": new_id}
-
-
-# -------------------------------------------------------------------
-# 3. Policy Matcher Endpoint
-# -------------------------------------------------------------------
-
-@app.post("/api/policy-match", response_model=PolicyMatchResponse)
-def policy_match(data: PolicyMatchRequest):
+# Policy Matcher Endpoint
+@api_v1_router.post(
+    "/policy-match",
+    response_model=PolicyMatchResponse,
+    tags=["Policy Matcher"],
+    summary="Match eligible government agricultural schemes"
+)
+def policy_match_v1(data: PolicyMatchRequest):
+    """Evaluates crop, land size, income, and state to return eligible government schemes via Gemini AI."""
+    logger.info(f"Received policy match request for {data.crop_type} in {data.state}")
     res = get_policy_matches(
         crop_type=data.crop_type,
         land_size=data.land_size,
@@ -204,3 +253,16 @@ def policy_match(data: PolicyMatchRequest):
         state=data.state
     )
     return res
+
+# Include Router v1
+app.include_router(api_v1_router)
+
+# -------------------------------------------------------------------
+# Backward-Compatible Legacy Route Aliases (/api/equipment, /api/workers, /api/policy-match)
+# Keeps existing README and frontend code working 100% seamlessly!
+# -------------------------------------------------------------------
+app.add_api_route("/api/equipment", get_equipment_v1, methods=["GET"], response_model=List[EquipmentResponse], include_in_schema=False)
+app.add_api_route("/api/equipment", create_equipment_v1, methods=["POST"], status_code=status.HTTP_201_CREATED, include_in_schema=False)
+app.add_api_route("/api/workers", get_workers_v1, methods=["GET"], response_model=List[WorkerResponse], include_in_schema=False)
+app.add_api_route("/api/workers", create_worker_v1, methods=["POST"], status_code=status.HTTP_201_CREATED, include_in_schema=False)
+app.add_api_route("/api/policy-match", policy_match_v1, methods=["POST"], response_model=PolicyMatchResponse, include_in_schema=False)

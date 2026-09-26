@@ -1,23 +1,16 @@
 import database
 
 def seed_data():
-    # Drop existing tables to recreate schema cleanly with new columns
-    conn = database.get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("DROP TABLE IF EXISTS equipment")
-    cursor.execute("DROP TABLE IF EXISTS workers")
-    conn.commit()
-    conn.close()
+    # 1. Drop existing tables to re-apply schema with timestamps cleanly
+    with database.get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("DROP TABLE IF EXISTS equipment;")
+        cursor.execute("DROP TABLE IF EXISTS workers;")
 
+    # 2. Re-initialize DB tables & indexes
     database.init_db()
-    conn = database.get_db_connection()
-    cursor = conn.cursor()
 
-    # Clear existing data to avoid duplicates during repeated runs
-    cursor.execute("DELETE FROM equipment")
-    cursor.execute("DELETE FROM workers")
-
-    # Sample Equipment Data with Vendor Name, Purpose, and Image URLs
+    # 3. Seed Equipment Data
     equipment_items = [
         (
             "John Deere 5050D Tractor", 
@@ -93,12 +86,14 @@ def seed_data():
         )
     ]
 
-    cursor.executemany("""
-        INSERT INTO equipment (name, type, purpose, condition, rent_per_day, location, contact, vendor_name, image_url, available)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """, equipment_items)
+    with database.get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.executemany("""
+            INSERT INTO equipment (name, type, purpose, condition, rent_per_day, location, contact, vendor_name, image_url, available)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, equipment_items)
 
-    # Sample Worker Data with Image URLs
+    # 4. Seed Worker Data
     worker_items = [
         (
             "Rajan K", 
@@ -157,14 +152,14 @@ def seed_data():
         )
     ]
 
-    cursor.executemany("""
-        INSERT INTO workers (name, skill, experience, daily_wage, location, contact, image_url, available_from, available_to)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """, worker_items)
+    with database.get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.executemany("""
+            INSERT INTO workers (name, skill, experience, daily_wage, location, contact, image_url, available_from, available_to)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, worker_items)
 
-    conn.commit()
-    conn.close()
-    print("[SUCCESS] Database schema updated and seeded with Equipment Vendors & Worker details!")
+    print("[SUCCESS] Database schema updated and seeded cleanly using context managers!")
 
 if __name__ == "__main__":
     seed_data()

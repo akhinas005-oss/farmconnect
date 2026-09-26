@@ -1,9 +1,16 @@
 import os
 import json
+import logging
 from typing import Dict, Any
+from config import settings
+
+logger = logging.getLogger("farmconnect.policy_matcher")
+
+# Thread-safe in-memory cache to reduce latency & API costs
+POLICY_CACHE: Dict[str, Dict[str, Any]] = {}
 
 def get_fallback_schemes(crop_type: str, land_size: str, income_range: str, state: str) -> Dict[str, Any]:
-    """Rule-based engine providing high-quality matching schemes when LLM key is absent or failing."""
+    """Rule-based engine providing high-quality matching schemes independently testable."""
     schemes = [
         {
             "name": "PM-KISAN (Pradhan Mantri Kisan Samman Nidhi)",
@@ -31,7 +38,6 @@ def get_fallback_schemes(crop_type: str, land_size: str, income_range: str, stat
         }
     ]
 
-    # Add state-specific customization if available
     state_lower = state.lower()
     if "kerala" in state_lower or "palakkad" in state_lower or "thrissur" in state_lower:
         schemes.append({
@@ -47,77 +53,90 @@ def get_fallback_schemes(crop_type: str, land_size: str, income_range: str, stat
             "benefit": "₹10,000 per acre per year.",
             "how_to_apply": "Register details with Agriculture Extension Officer (AEO)."
         })
-    elif "andhra" in state_lower:
-        schemes.append({
-            "name": "YSR Rythu Bharosa",
-            "description": "State financial assistance program for farmer families including tenant farmers.",
-            "benefit": "₹13,500 per year.",
-            "how_to_apply": "Apply through Rythu Bharosa Kendras (RBKs)."
-        })
 
     return {"schemes": schemes}
 
 
-def get_policy_matches(crop_type: str, land_size: str, income_range: str, state: str) -> Dict[str, Any]:
-    """Matches eligible schemes using Google Gemini LLM API if key is set, else uses rules engine fallback."""
-    api_key = os.getenv("GEMINI_API_KEY")
-    
-    if api_key and api_key.strip():
+def query_gemini_llm(crop_type: str, land_size: str, income_range: str, state: str) -> Dict[str, Any]:
+    """Independent function calling Google Gemini API with model fallback."""
+    api_key = settings.GEMINI_API_KEY
+    if not api_key or not api_key.strip():
+        raise ValueError("Gemini API key is not configured.")
+
+    from google import genai
+    from google.genai import types
+
+    client = genai.Client(api_key=api_key)
+    prompt = f"""
+    You are an expert Indian Government Agriculture Policy Advisor.
+    A farmer submitted their details:
+    - Crop Type: {crop_type}
+    - Land Size: {land_size}
+    - Income Range: {income_range}
+    - State/Location: {state}
+
+    Identify top 3 to 5 relevant government agricultural schemes, subsidies, crop insurance, or credit programs this farmer is eligible for in India and specifically in {state}.
+
+    Return JSON matching this exact schema:
+    {{
+      "schemes": [
+        {{
+          "name": "Exact Name of Scheme",
+          "description": "Clear 2-sentence summary of the scheme purpose",
+          "benefit": "Specific financial support or subsidy details",
+          "how_to_apply": "Actionable application steps or official portal link"
+        }}
+      ]
+    }}
+    Return ONLY valid JSON.
+    """
+
+    model_names = ['gemini-3.5-flash', 'gemini-3.6-flash', 'gemini-3.8-flash', 'gemini-2.5-flash']
+    response = None
+
+    for m_name in model_names:
         try:
-            from google import genai
-            from google.genai import types
-
-            client = genai.Client(api_key=api_key)
-            prompt = f"""
-            You are an expert Indian Government Agriculture Policy Advisor.
-            A farmer submitted their details:
-            - Crop Type: {crop_type}
-            - Land Size: {land_size}
-            - Income Range: {income_range}
-            - State/Location: {state}
-
-            Identify all top 3 to 5 relevant government agricultural schemes, subsidies, crop insurance, or credit programs this farmer is eligible for in India and specifically in {state}.
-
-            Return JSON matching this exact schema:
-            {{
-              "schemes": [
-                {{
-                  "name": "Exact Name of Scheme",
-                  "description": "Clear 2-sentence summary of the scheme purpose",
-                  "benefit": "Specific financial support or subsidy details (e.g., ₹6000/year or 50% equipment subsidy)",
-                  "how_to_apply": "Actionable application steps or official portal link"
-                }}
-              ]
-            }}
-            Do not include Markdown code fences or extra text, return ONLY valid JSON.
-            """
-
-            # Try Flash models available on Gemini API
-            model_names = ['gemini-3.5-flash', 'gemini-3.6-flash', 'gemini-3.8-flash', 'gemini-2.5-flash']
-            response = None
-            
-            for m_name in model_names:
-                try:
-                    response = client.models.generate_content(
-                        model=m_name,
-                        contents=prompt,
-                        config=types.GenerateContentConfig(
-                            response_mime_type="application/json",
-                            temperature=0.2,
-                        )
-                    )
-                    if response and response.text:
-                        break
-                except Exception as m_err:
-                    print(f"[PolicyMatcher] Model {m_name} failed: {m_err}, trying next...")
-                    continue
-
+            response = client.models.generate_content(
+                model=m_name,
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    response_mime_type="application/json",
+                    temperature=0.2,
+                )
+            )
             if response and response.text:
-                result = json.loads(response.text)
-                if "schemes" in result and isinstance(result["schemes"], list) and len(result["schemes"]) > 0:
-                    return result
-        except Exception as e:
-            print(f"[PolicyMatcher] Gemini API execution failed/fallback: {e}")
+                logger.info(f"Successfully generated policies using model {m_name}")
+                break
+        except Exception as m_err:
+            logger.warning(f"Gemini model {m_name} failed: {m_err}")
+            continue
 
-    # Fallback to rich rules engine
-    return get_fallback_schemes(crop_type, land_size, income_range, state)
+    if response and response.text:
+        result = json.loads(response.text)
+        if "schemes" in result and isinstance(result["schemes"], list) and len(result["schemes"]) > 0:
+            return result
+
+    raise RuntimeError("No valid response from Gemini API models.")
+
+
+def get_policy_matches(crop_type: str, land_size: str, income_range: str, state: str) -> Dict[str, Any]:
+    """Matches policy schemes using in-memory cache, Gemini LLM API, or rule-based engine fallback."""
+    cache_key = f"{crop_type.strip().lower()}|{land_size.strip().lower()}|{income_range.strip().lower()}|{state.strip().lower()}"
+    
+    # 1. Check in-memory cache
+    if cache_key in POLICY_CACHE:
+        logger.info(f"Serving policy matches from in-memory cache for key: {cache_key}")
+        return POLICY_CACHE[cache_key]
+
+    # 2. Query Gemini LLM
+    try:
+        res = query_gemini_llm(crop_type, land_size, income_range, state)
+        POLICY_CACHE[cache_key] = res
+        return res
+    except Exception as e:
+        logger.error(f"Gemini LLM policy query failed: {e}. Falling back to rule-based engine.")
+
+    # 3. Fallback to rule engine
+    fallback = get_fallback_schemes(crop_type, land_size, income_range, state)
+    POLICY_CACHE[cache_key] = fallback
+    return fallback
