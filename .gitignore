@@ -1,0 +1,21 @@
+# Virtual Environment
+venv/
+ENV/
+env/
+
+# Environment Variables & Secrets
+.env
+
+# Python Cache & Databases
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+
+# SQLite Database (Optional: keep or ignore, ignore by default to prevent merge conflicts)
+# farmconnect.db
+
+# OS Files
+.DS_Store
+Thumbs.db
