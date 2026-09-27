@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.model_selection import train_test_split
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 import logging
 
 logger = logging.getLogger("farmconnect.ml")
@@ -92,11 +92,36 @@ class CropYieldPredictor:
         self, 
         crop_type: str, 
         land_size_acres: float, 
-        soil_type: str = "alluvial", 
-        rainfall_mm: float = 1800.0, 
-        temperature_c: float = 28.0
+        location: str = "Palakkad, Kerala",
+        soil_type: Optional[str] = None, 
+        rainfall_mm: Optional[float] = None, 
+        temperature_c: Optional[float] = None
     ) -> Dict[str, Any]:
-        """Predicts expected yield and estimated gross revenue using Supervised Random Forest Regressor."""
+        """Predicts expected yield and revenue with smart location-based defaults so farmers only need crop & land size."""
+        loc_clean = (location or "kerala").strip().lower()
+        
+        # Smart location-based inference defaults if technical weather data is omitted
+        if not soil_type or not soil_type.strip():
+            if "kerala" in loc_clean or "palakkad" in loc_clean or "thrissur" in loc_clean or "wayanad" in loc_clean:
+                soil_type = "alluvial"
+            elif "telangana" in loc_clean or "andhra" in loc_clean:
+                soil_type = "red"
+            elif "punjab" in loc_clean or "haryana" in loc_clean:
+                soil_type = "alluvial"
+            else:
+                soil_type = "loamy"
+
+        if not rainfall_mm or rainfall_mm <= 0:
+            if "kerala" in loc_clean or "wayanad" in loc_clean:
+                rainfall_mm = 2400.0
+            elif "palakkad" in loc_clean or "thrissur" in loc_clean:
+                rainfall_mm = 1900.0
+            else:
+                rainfall_mm = 1400.0
+
+        if not temperature_c or temperature_c <= 0:
+            temperature_c = 28.0
+
         crop_clean = crop_type.strip().lower()
         crop_code = 0  # default Paddy
         for key, code in CROP_MAPPING.items():

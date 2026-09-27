@@ -266,13 +266,14 @@ def policy_match_v1(data: PolicyMatchRequest):
 )
 def predict_crop_yield_v1(data: CropYieldPredictRequest):
     """Predicts agricultural crop yield (in tons) and revenue (in INR) using a Supervised Random Forest Regressor ML Model trained on ICAR benchmarks."""
-    logger.info(f"Received ML yield prediction request for {data.crop_type} on {data.land_size_acres} acres")
+    logger.info(f"Received ML yield prediction request for {data.crop_type} on {data.land_size_acres} acres in {data.location}")
     res = yield_predictor.predict(
         crop_type=data.crop_type,
         land_size_acres=data.land_size_acres,
-        soil_type=data.soil_type or "alluvial",
-        rainfall_mm=data.rainfall_mm or 1800.0,
-        temperature_c=data.temperature_c or 28.0
+        location=data.location or "Palakkad, Kerala",
+        soil_type=data.soil_type,
+        rainfall_mm=data.rainfall_mm,
+        temperature_c=data.temperature_c
     )
     return res
 

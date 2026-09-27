@@ -113,9 +113,10 @@ class PolicyMatchResponse(BaseModel):
 class CropYieldPredictRequest(BaseModel):
     crop_type: str = Field(..., min_length=2, max_length=100, example="Paddy")
     land_size_acres: float = Field(..., gt=0, example=2.5, description="Land size in Acres")
-    soil_type: Optional[str] = Field("Alluvial", example="Alluvial")
-    rainfall_mm: Optional[float] = Field(1800.0, gt=0, example=1800.0)
-    temperature_c: Optional[float] = Field(28.0, gt=5.0, lt=60.0, example=28.0)
+    location: Optional[str] = Field("Palakkad, Kerala", example="Palakkad, Kerala")
+    soil_type: Optional[str] = Field(None, example="Alluvial")
+    rainfall_mm: Optional[float] = Field(None, gt=0, example=1800.0)
+    temperature_c: Optional[float] = Field(None, gt=5.0, lt=60.0, example=28.0)
 
 class CropYieldPredictResponse(BaseModel):
     crop_type: str
