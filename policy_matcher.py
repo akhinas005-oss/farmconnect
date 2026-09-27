@@ -16,25 +16,29 @@ def get_fallback_schemes(crop_type: str, land_size: str, income_range: str, stat
             "name": "PM-KISAN (Pradhan Mantri Kisan Samman Nidhi)",
             "description": "Central sector scheme providing income support to small and marginal farmer families across India.",
             "benefit": "₹6,000 per year paid in 3 equal installments directly into bank account.",
-            "how_to_apply": "Apply via pmkisan.gov.in portal or visit nearest Common Service Centre (CSC) with Aadhaar and land records."
+            "how_to_apply": ["Check your eligibility on pmkisan.gov.in.", "Gather your Aadhaar card and land ownership documents.", "Register online or visit your nearest Common Service Centre (CSC) with the documents."],
+            "link": "https://pmkisan.gov.in/"
         },
         {
             "name": "Pradhan Mantri Fasal Bima Yojana (PMFBY)",
             "description": f"Comprehensive crop insurance scheme protecting {crop_type} crops against non-preventable natural risks, pests & diseases.",
             "benefit": "Full financial cover for crop damage with low premium (1.5% to 2% for food crops).",
-            "how_to_apply": "Enroll through your crop loan bank branch or register online at pmfby.gov.in within notified cut-off date."
+            "how_to_apply": ["Check the cut-off date for enrollment for the current season.", "Gather your land records, Aadhaar, and bank passbook.", "Enroll through your crop loan bank branch or register online at pmfby.gov.in."],
+            "link": "https://pmfby.gov.in/"
         },
         {
             "name": "Kisan Credit Card (KCC) Scheme",
             "description": "Provides timely access to short-term credit for crop cultivation, harvest expenses, and equipment maintenance.",
             "benefit": "Concessional interest rate at 4% per annum for prompt repayment on loans up to ₹3 Lakh.",
-            "how_to_apply": "Submit KCC application form at any Commercial Bank, RRB, or Cooperative Bank."
+            "how_to_apply": ["Download the KCC application form or visit a nearby bank.", "Fill the form and attach your land documents and Aadhaar.", "Submit the application at any Commercial Bank, RRB, or Cooperative Bank."],
+            "link": "https://myscheme.gov.in/schemes/kcc"
         },
         {
             "name": "Sub-Mission on Agricultural Mechanization (SMAM)",
             "description": "Subsidy program to promote farm mechanization and equipment ownership among smallholders.",
             "benefit": "40% to 50% financial subsidy on tractors, tillers, harvesters, and sprayers.",
-            "how_to_apply": "Register on agrimachinery.nic.in and submit land record proof."
+            "how_to_apply": ["Visit the Direct Benefit Transfer in Agriculture Mechanization portal.", "Register your details on agrimachinery.nic.in.", "Submit your land record proof and bank account details for subsidy transfer."],
+            "link": "https://agrimachinery.nic.in/"
         }
     ]
 
@@ -44,14 +48,16 @@ def get_fallback_schemes(crop_type: str, land_size: str, income_range: str, stat
             "name": "Subhiksha Keralam Scheme",
             "description": "State government incentive program for fallow land cultivation and vegetable farming.",
             "benefit": "Financial grant up to ₹40,000 per hectare for food crops.",
-            "how_to_apply": "Contact Krishi Bhavan officer in your local Grama Panchayat."
+            "how_to_apply": ["Identify fallow land suitable for cultivation.", "Prepare a basic project plan or crop schedule.", "Contact the Krishi Bhavan officer in your local Grama Panchayat to submit your proposal."],
+            "link": "https://keralaagriculture.gov.in/"
         })
     elif "telangana" in state_lower:
         schemes.append({
             "name": "Rythu Bandhu Scheme",
             "description": "Financial assistance for purchasing inputs like seeds, fertilizers, and pesticides.",
             "benefit": "₹10,000 per acre per year.",
-            "how_to_apply": "Register details with Agriculture Extension Officer (AEO)."
+            "how_to_apply": ["Ensure your land records are updated in the Dharani portal.", "Link your Aadhaar to your bank account.", "Register details with your local Agriculture Extension Officer (AEO)."],
+            "link": "https://rythubandhu.telangana.gov.in/"
         })
 
     return {"schemes": schemes}
@@ -84,7 +90,12 @@ def query_gemini_llm(crop_type: str, land_size: str, income_range: str, state: s
           "name": "Exact Name of Scheme",
           "description": "Clear 2-sentence summary of the scheme purpose",
           "benefit": "Specific financial support or subsidy details",
-          "how_to_apply": "Actionable application steps or official portal link"
+          "how_to_apply": [
+            "Actionable application step 1",
+            "Actionable application step 2",
+            "Actionable application step 3"
+          ],
+          "link": "A valid https:// URL to the official government portal for this scheme"
         }}
       ]
     }}

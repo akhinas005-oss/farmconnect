@@ -104,7 +104,7 @@ class SchemeItem(BaseModel):
     name: str
     description: str
     benefit: str
-    how_to_apply: str
+    how_to_apply: List[str]
 
 class PolicyMatchResponse(BaseModel):
     schemes: List[SchemeItem]
