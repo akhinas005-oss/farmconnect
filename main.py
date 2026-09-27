@@ -9,9 +9,11 @@ import database
 from models import (
     EquipmentCreate, EquipmentResponse,
     WorkerCreate, WorkerResponse,
-    PolicyMatchRequest, PolicyMatchResponse
+    PolicyMatchRequest, PolicyMatchResponse,
+    CropYieldPredictRequest, CropYieldPredictResponse
 )
 from policy_matcher import get_policy_matches
+from ml_service import yield_predictor
 
 # -------------------------------------------------------------------
 # Logging Setup
@@ -27,7 +29,7 @@ logger = logging.getLogger("farmconnect.api")
 # -------------------------------------------------------------------
 app = FastAPI(
     title=settings.APP_NAME,
-    description="Production-grade Backend API Service & AI Policy Matcher for FarmConnect",
+    description="Production-grade Backend API Service, ML Yield Predictor & AI Policy Matcher for FarmConnect",
     version="1.0.0",
     docs_url="/docs",
     redoc_url="/redoc"
@@ -45,7 +47,7 @@ app.add_middleware(
 )
 
 # -------------------------------------------------------------------
-# Global Exception Handlers (Consistent JSON Error Shape)
+# Global Exception Handlers
 # -------------------------------------------------------------------
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request: Request, exc: HTTPException):
@@ -98,7 +100,8 @@ def health_check():
         "status": "online" if db_status == "healthy" else "degraded",
         "database": db_status,
         "app": settings.APP_NAME,
-        "environment": settings.ENV
+        "environment": settings.ENV,
+        "ml_model": "active" if yield_predictor.is_trained else "offline"
     }
 
 @app.get("/", tags=["Health"], include_in_schema=False)
@@ -254,15 +257,34 @@ def policy_match_v1(data: PolicyMatchRequest):
     )
     return res
 
+# Supervised Machine Learning Yield Predictor Endpoint
+@api_v1_router.post(
+    "/predict-yield",
+    response_model=CropYieldPredictResponse,
+    tags=["Machine Learning"],
+    summary="Predict crop yield and revenue using Supervised ML"
+)
+def predict_crop_yield_v1(data: CropYieldPredictRequest):
+    """Predicts agricultural crop yield (in tons) and revenue (in INR) using a Supervised Random Forest Regressor ML Model trained on ICAR benchmarks."""
+    logger.info(f"Received ML yield prediction request for {data.crop_type} on {data.land_size_acres} acres")
+    res = yield_predictor.predict(
+        crop_type=data.crop_type,
+        land_size_acres=data.land_size_acres,
+        soil_type=data.soil_type or "alluvial",
+        rainfall_mm=data.rainfall_mm or 1800.0,
+        temperature_c=data.temperature_c or 28.0
+    )
+    return res
+
 # Include Router v1
 app.include_router(api_v1_router)
 
 # -------------------------------------------------------------------
-# Backward-Compatible Legacy Route Aliases (/api/equipment, /api/workers, /api/policy-match)
-# Keeps existing README and frontend code working 100% seamlessly!
+# Backward-Compatible Legacy Route Aliases
 # -------------------------------------------------------------------
 app.add_api_route("/api/equipment", get_equipment_v1, methods=["GET"], response_model=List[EquipmentResponse], include_in_schema=False)
 app.add_api_route("/api/equipment", create_equipment_v1, methods=["POST"], status_code=status.HTTP_201_CREATED, include_in_schema=False)
 app.add_api_route("/api/workers", get_workers_v1, methods=["GET"], response_model=List[WorkerResponse], include_in_schema=False)
 app.add_api_route("/api/workers", create_worker_v1, methods=["POST"], status_code=status.HTTP_201_CREATED, include_in_schema=False)
 app.add_api_route("/api/policy-match", policy_match_v1, methods=["POST"], response_model=PolicyMatchResponse, include_in_schema=False)
+app.add_api_route("/api/predict-yield", predict_crop_yield_v1, methods=["POST"], response_model=CropYieldPredictResponse, include_in_schema=False)
